@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/auth.context';
@@ -15,13 +15,31 @@ import {
   Menu,
   X,
   Bell,
-  Search
+  Search,
+  Check,
+  CheckCheck,
+  Info
 } from 'lucide-react';
+
+interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  type: string;
+  createdAt: string;
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  
+  // Notification states
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Loading screen
   if (loading) {
@@ -49,6 +67,67 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const handleLogout = async () => {
     if (confirm('Are you sure you want to sign out?')) {
       await logout();
+    }
+  };
+
+  // Notification actions
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notifications');
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications);
+        setUnreadCount(data.unreadCount);
+      }
+    } catch (e) {
+      console.error('Failed to load notifications:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+    // Poll notifications every 30 seconds for live updates
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
+  // Click outside to close notification dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleMarkAsRead = async (id: string) => {
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) {
+        fetchNotifications();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        fetchNotifications();
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -147,12 +226,73 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Notification Badge */}
-            <button className="relative p-2 text-zinc-400 hover:text-zinc-200 transition-colors">
-              <Bell size={18} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-indigo-500 ring-2 ring-[#09090b]" />
-            </button>
+          <div className="flex items-center gap-4 relative">
+            
+            {/* Notification Bell with Droppable Dropdown */}
+            <div ref={dropdownRef}>
+              <button 
+                onClick={() => setNotifOpen(!notifOpen)}
+                className="relative p-2 text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                <Bell size={18} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-indigo-650 text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#09090b]">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* DROPDOWN PANEL */}
+              {notifOpen && (
+                <div className="absolute right-0 mt-3 w-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 animate-fade-in">
+                  <div className="p-4 border-b border-zinc-850 flex justify-between items-center bg-zinc-900/30">
+                    <span className="text-xs font-semibold text-zinc-200">System Notifications</span>
+                    {unreadCount > 0 && (
+                      <button 
+                        onClick={handleMarkAllAsRead}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1"
+                      >
+                        <CheckCheck size={12} /> Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-64 overflow-y-auto divide-y divide-zinc-850">
+                    {notifications.length === 0 ? (
+                      <div className="p-6 text-center text-zinc-500 text-xs">
+                        No notifications to display
+                      </div>
+                    ) : (
+                      notifications.map((notif) => (
+                        <div 
+                          key={notif.id} 
+                          onClick={() => !notif.isRead && handleMarkAsRead(notif.id)}
+                          className={`p-3.5 transition-colors cursor-pointer text-xs ${notif.isRead ? 'opacity-60 hover:bg-zinc-900/10' : 'bg-indigo-500/[0.01] hover:bg-indigo-500/[0.03]'}`}
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <span className={`font-semibold ${notif.isRead ? 'text-zinc-300' : 'text-zinc-150'}`}>
+                              {notif.title}
+                            </span>
+                            {!notif.isRead && (
+                              <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full shrink-0 mt-1" />
+                            )}
+                          </div>
+                          <p className="text-zinc-400 text-[11px] mt-1 leading-relaxed">{notif.message}</p>
+                          <span className="text-[9px] text-zinc-500 block mt-2">
+                            {new Date(notif.createdAt).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             
             {/* Divider */}
             <div className="w-px h-6 bg-zinc-800" />
